@@ -34,7 +34,7 @@ def clip_area(data_path: str, boundaries: str, name: str):
             dst.write(masked_data)
 
 
-def apply_constraints(gbay_output_path, elevation, energy_production, distance_street, distance_grid, boundaries, name):
+def generate_mask(gbay_output_path, elevation, energy_production, distance_street, distance_grid, boundaries, name):
     swissboundaries = gpd.read_file(boundaries)
     area = swissboundaries[swissboundaries['NAME'] == name]
     area = area.to_crs(epsg=2056)
@@ -69,22 +69,22 @@ def apply_constraints(gbay_output_path, elevation, energy_production, distance_s
 
     # Grid
     with rasterio.open("data/constraints/grid_10km.tif") as src:
-        grid_data, masked_transform = raster_mask(src, mask_geom, crop=True, indexes=1)
+        grid_data, masked_transform = raster_mask(src, mask_geom, crop=True, indexes=2)
         grid_crs = src.crs
         grid_transform = src.transform
         grid_profile = src.profile
 
     masked_grid = np.ma.masked_where(grid_data == -9999, grid_data)
-    masked_grid = np.ma.masked_where(masked_grid < distance_grid/10_000, masked_grid)
+    masked_grid = np.ma.masked_where(masked_grid > distance_grid, masked_grid)
 
     # Streets
     with rasterio.open("data/constraints/street_10km.tif") as src:
-        street_data, masked_transform = raster_mask(src, mask_geom, crop=True, indexes=1)
+        street_data, masked_transform = raster_mask(src, mask_geom, crop=True, indexes=2)
         street_crs = src.crs
         street_transform = src.transform
         street_profile = src.profile
     masked_street = np.ma.masked_where(street_data == -9999, street_data)
-    masked_street = np.ma.masked_where(masked_street < distance_street/10_000, masked_street)
+    masked_street = np.ma.masked_where(masked_street > distance_street, masked_street)
 
     # Energy production potential
     with rasterio.open("data/constraints/final_5.1.tif") as src:
@@ -94,7 +94,7 @@ def apply_constraints(gbay_output_path, elevation, energy_production, distance_s
         epp_transform = src.transform
         epp_profile = src.profile
     masked_epp = np.ma.masked_where(epp_data == -9999, epp_data)
-    masked_epp = np.ma.masked_where(masked_epp > energy_production, masked_epp)
+    masked_epp = np.ma.masked_where(masked_epp < energy_production, masked_epp)
 
     #v_mask = generate_vector_mask(dhm25, bln, parks, area)
     # Plot all masked arrays
@@ -102,34 +102,51 @@ def apply_constraints(gbay_output_path, elevation, energy_production, distance_s
     axes = axes.flatten()
 
     masked_arrays = [masked_epp, masked_grid, masked_street, masked_bln, masked_parks, masked_dhm25]
+
     titles = ["Energy Production Potential", "Grid", "Street", "BLN", "Parks", "DHM25"]
 
     for ax, masked, title in zip(axes, masked_arrays, titles):
-        ax.imshow(masked, cmap="terrain", origin="upper")
+        ax.imshow(masked.mask, cmap="terrain", origin="upper")
+        #show x and y ticks
+        ax.set_xticks([])
+        ax.set_yticks([])
         ax.set_title(title)
-        ax.axis("off")
+        #ax.axis("off")
 
     plt.tight_layout()
     plt.show()
 
-    intersection_mask = [masked_grid, masked_street, masked_epp, masked_dhm25]
-    exlusion_mask = [masked_bln, masked_parks]
+    intersection_mask = [masked_grid, masked_street, masked_dhm25]#masked_epp, masked_dhm25]
+    exclusion_mask = [masked_bln, masked_parks]
 
     min_rows_in = min([masked.shape[0] for masked in intersection_mask])
     min_cols_in = min([masked.shape[1] for masked in intersection_mask])
 
-    min_rows_ex = min([masked.shape[0] for masked in exlusion_mask])
-    min_cols_ex = min([masked.shape[1] for masked in exlusion_mask])
+    min_rows_ex = min([masked.shape[0] for masked in exclusion_mask])
+    min_cols_ex = min([masked.shape[1] for masked in exclusion_mask])
 
     min_rows = min(min_rows_in, min_rows_ex)
     min_cols = min(min_cols_in, min_cols_ex)
 
     cropped_masks_in = [masked[:min_rows, :min_cols].mask for masked in intersection_mask]
-    cropped_masks_ex = [masked[:min_rows, :min_cols].mask for masked in exlusion_mask]
+    cropped_masks_ex = [masked[:min_rows, :min_cols].mask for masked in exclusion_mask]
 
-    combined_mask_in = np.logical_or.reduce(cropped_masks_in)
-    combined_mask_ex = np.logical_and.reduce(cropped_masks_ex)
+    # Combine the masks
+    combined_mask_in = np.logical_not(np.any([m for m in cropped_masks_in], axis=0))
 
+    combined_mask_ex = (
+            masked_bln[:min_rows, :min_cols].mask &
+            masked_parks[:min_rows, :min_cols].mask
+    )
+    #combined_mask_in = np.logical_or.reduce(cropped_masks_in)
+    #combined_mask_ex = np.logical_and.reduce(cropped_masks_ex)
+
+    plt.imshow(combined_mask_in, cmap="terrain", origin="lower")
+    plt.title("combined_mask_in")
+    plt.show()
+    plt.imshow(combined_mask_ex, cmap="terrain", origin="lower")
+    plt.title("combined_mask_ex")
+    plt.show()
     # Combine the masks
     final_mask = np.logical_and(combined_mask_in, ~combined_mask_ex)
 
@@ -175,6 +192,7 @@ def rasterize_vector(geo_df, resolution=25):
         dataset.write(raster, 1)
 
     return memfile
+
 
 # not used anymore - may be deleted TODO
 def generate_vector_mask(base, *args):
