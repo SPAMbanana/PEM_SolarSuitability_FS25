@@ -206,43 +206,6 @@ def apply_mask(input_path, mask, mask_transform, area_name):
         for i, masked in enumerate(masked_bands, start=1):
             dst.write(masked, i)
 
-"""def apply_mask(input_path, mask, mask_transform, area_name):
-    with rasterio.open(input_path) as src:
-        profile = src.profile
-        meta = src.meta.copy()
-        data1 = src.read(1)  # Read the first band
-        data2 = src.read(2)  # Read the second band
-        data3 = src.read(3)  # Read the third band
-
-        resampled_mask = np.empty((src.height, src.width), dtype=np.uint8)
-
-        reproject(
-            source=mask,
-            destination=resampled_mask,
-            src_transform=mask_transform,
-            src_crs=src.crs,
-            dst_transform=src.transform,
-            dst_crs=src.crs,
-            resampling=Resampling.nearest
-        )
-
-        for i, data in enumerate([data1, data2, data3], start=1):
-            # Apply the mask
-            # TODO: check if the mask is at the same place as the data
-            masked_data = np.ma.masked_where(resampled_mask == 0, data)
-            # masked_data, masked_transform = raster_mask(src, mask, crop=False, indexes=i)
-            profile.update({
-                "height": masked_data.shape[1],
-                "width": masked_data.shape[2],
-                # "transform": masked_transform
-            })
-
-            show(masked_data, transform=mask_transform, cmap="terrain", title="Final Mask", origin='lower')
-            plt.show()
-
-            with rasterio.open(f"data_output/final_output/masked_gbay_{area_name}.tif", "w", **profile) as dst:
-                dst.write(masked_data, indexes=i)"""
-
 
 if __name__ == "__main__":
     main()
