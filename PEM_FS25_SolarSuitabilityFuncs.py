@@ -5,6 +5,7 @@ import geopandas as gpd
 import rasterio
 import rasterio.plot
 import rasterio.features
+from matplotlib.pyplot import imshow
 from rasterio.mask import mask as raster_mask
 from rasterio.plot import show
 from rasterio.warp import reproject, Resampling
@@ -16,8 +17,7 @@ def main():
 
 def clip_area(data_path: str, boundaries: str, name: str):
     swissboundaries = gpd.read_file(boundaries)
-    area = swissboundaries[swissboundaries['NAME'] == name]
-    area = area.to_crs(epsg=2056)
+    area = swissboundaries[swissboundaries['NAME'] == name].to_crs(epsg=2056)
 
     output_path = "data_output/NCPs_clipped"
 
@@ -205,6 +205,51 @@ def apply_mask(input_path, mask, mask_transform, area_name):
     with rasterio.open(output_path, "w", **profile) as dst:
         for i, masked in enumerate(masked_bands, start=1):
             dst.write(masked, i)
+
+
+def netica_priors(ncp_path, boundaries, area_name):
+    # breaks defined with <=
+    breaks = {
+        "AIR": {0.145, 0.417},
+        "WY": {0.184, 0.337},
+        "MAT": {0.001, 0.675},
+        "SR": {0.01176, 0.0549},
+        "CAR": {0.29, 0.612},
+        "FF": {0.226, 0.663},
+        "ID": {0.145, 0.373},
+        "HAB": {0.345, 0.71},
+        "LI": {0.2314, 0.5373},
+        "POL": {0.29, 0.569},
+        "REC": {0.204, 0.486}
+    }
+    swissboundaries = gpd.read_file(boundaries)
+    area = swissboundaries[swissboundaries['NAME'] == area_name].to_crs(epsg=2056)
+
+    for file in os.listdir(ncp_path):
+        ncp_name = os.path.splitext(file)[0].upper()
+        match_key = next((key for key in breaks if key in ncp_name), None)
+
+        if match_key is None:
+            print(f"[SKIP] No breakpoints defined for: {file}")
+            continue
+
+        b1, b2 = breaks[match_key]
+
+        with rasterio.open(f"data/NCPs/{file}") as src:
+            profile = src.profile
+            mask_geom = [geom.__geo_interface__ for geom in area.geometry]
+            masked_data, masked_transform = raster_mask(src, mask_geom, crop=True)
+
+        low = np.sum(masked_data <= b1)
+        medium = np.sum((masked_data > b1) & (masked_data <= b2))
+        high = np.sum(masked_data > b2)
+        total = low + medium + high
+
+        print(f"== {match_key} ({file}) ==")
+        print(f"Low    (≤ {b1:.3f}): {low / total:.2%}")
+        print(f"Medium (≤ {b2:.3f}): {medium / total:.2%}")
+        print(f"High   (> {b2:.3f}): {high / total:.2%}")
+        print()
 
 
 if __name__ == "__main__":
